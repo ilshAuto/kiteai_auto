@@ -1,0 +1,12 @@
+What is blockchain immutability and why is it important in Web3?
+How do smart contracts work and how do they differ from traditional contracts?
+How does decentralized storage (IPFS) work in Web3?
+What are Gas fees and why does the Ethereum network need them?
+Explain blockchain consensus mechanisms and the difference between PoW and PoS.
+How to listen to smart contract events using ethers.js?
+What's the difference between memory and storage keywords in Solidity?
+How to optimize smart contracts to reduce Gas fees?
+Explain reentrancy attacks in smart contracts and how to prevent them.
+How to implement wallet connection using Web3.js?
+How do Automated Market Makers (AMM) work?
+What are Flash Loans and their use cases?
