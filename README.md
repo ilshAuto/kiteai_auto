@@ -21,6 +21,8 @@
 - 流式响应实时处理
 
 ## 安装说明
+先启动JS、再启动Python
+
 ### python部分
 用于kite交互
 1. 安装依赖包：
@@ -30,7 +32,8 @@ pip install -r requirements.txt
 3. 创建acc文件：
 写入助记词、socks5代理，
 格式：xxxx xxxx xxxx ... ---- socks5://127.0.0.1:1000
-
+4. 启动
+ python kiteai.py
 ### js部分
 用于生成钱包签名，使用webstorm或者命令行启动
 复制js_server中的js文件
