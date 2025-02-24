@@ -230,7 +230,7 @@ class KiteAIClient:
             try:
                 await self.main_auth()
                 daily_agent_actions_xp = await self.get_status()
-                if daily_agent_actions_xp <= 200:
+                if daily_agent_actions_xp < 200:
                     logger.info(f'{self.proxy}----{self.wallet_address}准备交互')
                     for i in range(20):
                         try:
