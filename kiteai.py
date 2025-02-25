@@ -12,75 +12,86 @@ import httpx
 from fake_useragent import UserAgent
 from loguru import logger
 import aiofiles
+
 # 初始化日志记录
 logger.remove()
 logger.add(sys.stdout, format='<g>{time:YYYY-MM-DD HH:mm:ss:SSS}</g> | <c>{level}</c> | <level>{message}</level>')
 
 code_list = ["m4jdT5ua", "p9sGeEgv", "FgKtwuH6"]
 
+
 async def stream_reader(
         url: str,
         json_data: Dict[str, Any],
-        proxy:str,
-        headers:dict
+        proxy: str,
+        headers: dict,
+        max_retries: int = 3,  # 添加最大重试次数
+        retry_delay: float = 2.0  # 添加重试延迟
 ):
     # 设置超时
-    timeout = aiohttp.ClientTimeout(total=None)  # 无限超时
+    timeout = aiohttp.ClientTimeout(total=60)  # 设置60秒超时
     full_content = []
     is_success = True
-    try:
-        async with aiohttp.ClientSession() as session:
-            async with session.post(
-                    url,
-                    json=json_data,
-                    headers=headers,
-                    proxy=proxy,
-                    ssl=False
-            ) as response:
-                if response.status != 200:
-                    error_text = await response.text()
-                    raise Exception(f"请求失败，状态码: {response.status}, 错误信息: {error_text}")
+    retry_count = 0
 
-                async for line in response.content:
-                    line = line.decode('utf-8').strip()
-
-                    if not line:
-                        continue
+    while retry_count < max_retries:
+        try:
+            async with aiohttp.ClientSession(timeout=timeout) as session:
+                async with session.post(
+                        url,
+                        json=json_data,
+                        headers=headers,
+                        proxy=proxy,
+                        ssl=False
+                ) as response:
+                    if response.status != 200:
+                        error_text = await response.text()
+                        raise Exception(f"请求失败，状态码: {response.status}, 错误信息: {error_text}")
 
                     try:
-                        # 检查是否是结束标记
-                        if line == '[DONE]':
-                            break
+                        async for line in response.content:
+                            line = line.decode('utf-8').strip()
 
-                        # 处理data:前缀
-                        if line.startswith('data:'):
-                            line = line[5:].strip()  # 移除'data:'前缀
+                            if not line:
+                                continue
 
-                        if not line:  # 如果去掉前缀后为空，跳过
-                            continue
-
-                        json_response = json.loads(line)
-                        choices = json_response.get('choices', [])
-                        if choices:
-                            delta = choices[0].get('delta', {})
-                            content = delta.get('content')
-                            # 只有当content不为None时才添加到结果中
-                            if content is not None:
-                                full_content.append(content)
                             # 检查是否是结束标记
-                            if choices[0].get('finish_reason') == 'stop':
-                                break
+                            if line == '[DONE]':
+                                return ''.join(full_content)
 
-                    except json.JSONDecodeError as e:
-                        if '[DONE]' not in line:  # 忽略 [DONE] 的解析错误
-                            logger.error(f"JSON解析错误: {e}, 原始数据: {line}")
-                            is_success = False
+                            # 处理data:前缀
+                            if line.startswith('data:'):
+                                line = line[5:].strip()
 
-    except Exception as e:
-        print(f"发生错误: {e}")
-        is_success = False
+                            if not line:
+                                continue
 
-    return ''.join(full_content)
+                            json_response = json.loads(line)
+                            choices = json_response.get('choices', [])
+                            if choices:
+                                delta = choices[0].get('delta', {})
+                                content = delta.get('content')
+                                if content is not None:
+                                    full_content.append(content)
+                                if choices[0].get('finish_reason') == 'stop':
+                                    return ''.join(full_content)
+
+                    except (aiohttp.ClientError, json.JSONDecodeError) as e:
+                        if '[DONE]' not in line:
+                            logger.error(f"处理响应时发生错误: {e}, 原始数据: {line}")
+                            raise
+
+            # 如果成功完成，返回结果
+            return ''.join(full_content)
+
+        except Exception as e:
+            retry_count += 1
+            if retry_count < max_retries:
+                logger.warning(f"第 {retry_count} 次重试，错误: {e}")
+                await asyncio.sleep(retry_delay)
+            else:
+                logger.error(f"达到最大重试次数，最终错误: {e}")
+                return ''.join(full_content) if full_content else ''
 
 
 class ScraperReq:
@@ -107,9 +118,11 @@ class ScraperReq:
     async def get_async(self, url, req_param=None, req_json=None):
         return await asyncio.to_thread(self.get_req, url, req_param)
 
+
 class KiteAIClient:
-    JS_SERVER = 'http://127.0.0.1:3002'
-    def __init__(self, mnemonic, proxy:str, main_header:dict, event_stream_header:dict=None, interact_header:dict=None):
+
+    def __init__(self, mnemonic, proxy: str, main_header: dict, event_stream_header: dict = None,
+                 interact_header: dict = None, JS_SERVER: str = ""):
         self.mnemonic = mnemonic
         self.proxy = proxy
         # 配置请求
@@ -122,20 +135,19 @@ class KiteAIClient:
         self.referral_id = random.choice(code_list)
         self.event_stream_req = ScraperReq(self.proxy_dict, event_stream_header)
         self.interact_req = ScraperReq(self.proxy_dict, interact_header)
-        self.ques_list:list[str] = []
+        self.ques_list: list[str] = []
+        self.JS_SERVER = f'http://{JS_SERVER}:3666'
 
-    async def get_signature(self, message:str):
+    async def get_signature(self, message: str):
         payload = {
             'mnemonic': self.mnemonic,
             'proxy': self.proxy,
-            'message': message
+            'payload': message
         }
-        # res = await .post_async(f'{self.JS_SERVER}/api/signature', req_json=payload)
-        return await httpx.AsyncClient().post(f'{self.JS_SERVER}/api/signature', json=payload)
-
-        # signature_hex = res.json()['data']['signatureHex']
-        # address = res.json()['data']['address']
-        # print(res.json())
+        # print(payload)
+        res = await httpx.AsyncClient(timeout=30).post(f'{self.JS_SERVER}/api/sign', json=payload)
+        # print(res.text)
+        return res
 
     async def main_auth(self):
         self.main_req.header.update({'x-auth-token': None})
@@ -155,9 +167,11 @@ class KiteAIClient:
             if data.get("success"):
                 message = data.get("payload")
                 # print(message)
+                # print(message)
                 sign_res = await self.get_signature(message)
-                signature_hex = sign_res.json()['data']['signatureHex']
-                address = sign_res.json()['data']['address']
+                # print(sign_res.text)
+                signature_hex = sign_res.json()['signature']
+                address = sign_res.json()['address']
                 self.wallet_address = address
                 # 拿token
                 auth_url = 'https://api-kiteai.bonusblock.io/api/auth/eth'
@@ -184,7 +198,8 @@ class KiteAIClient:
 
         payload = status_res.json()['payload']
         daily_agent_actions_xp = payload['dailyAgentActionsXp']
-        logger.info(f"status: {self.proxy}----{self.wallet_address}: xp:{payload['userXp']}: ranK:{payload['rank']} dailyActionXp:{daily_agent_actions_xp}")
+        logger.info(
+            f"status: {self.proxy}----{self.wallet_address}: xp:{payload['userXp']}: ranK:{payload['rank']} dailyActionXp:{daily_agent_actions_xp}")
 
         return daily_agent_actions_xp
 
@@ -200,10 +215,24 @@ class KiteAIClient:
             return
         payload = {"message": text, "stream": True}
 
-        chat_res = await stream_reader(url, payload, self.proxy, self.event_stream_req.header)
+        chat_res = await stream_reader(
+            url,
+            payload,
+            self.proxy,
+            self.event_stream_req.header,
+            max_retries=3,  # 可以根据需要调整重试次数
+            retry_delay=2.0
+        )
+
+        if not chat_res:  # 如果没有得到有效响应
+            logger.warning(f"未能获取到有效的聊天响应: {self.proxy}----{self.wallet_address}")
+            return
+
         report_url = 'https://quests-usage-dev.prod.zettablock.com/api/report_usage'
+
         logger.info(f"chat: {self.proxy}----{self.wallet_address}: ques:{text}: answer:{chat_res}")
-        report_json = {"wallet_address":self.wallet_address,"agent_id":"deployment_HlsY5TJcguvEA2aqgPliXJjg","request_text":text,"response_text":chat_res,"request_metadata":{}}
+        report_json = {"wallet_address": self.wallet_address, "agent_id": "deployment_HlsY5TJcguvEA2aqgPliXJjg",
+                       "request_text": text, "response_text": chat_res, "request_metadata": {}}
         res = await self.interact_req.post_async(url=report_url, req_json=report_json, req_param=None)
         logger.info(f"report: {self.proxy}----{self.wallet_address}----report-res:{res.text}")
         if 'Rate limit exceeded' in res.text:
@@ -213,17 +242,18 @@ class KiteAIClient:
         interaction_id = res.json()['interaction_id']
         interaction_url = f'https://neo-dev.prod.zettablock.com/v1/inference?id={interaction_id}'
         res = await self.interact_req.get_async(interaction_url)
-        logger.info(f'interaction-res: {self.proxy}----{self.wallet_address}----report-res: tx_hash:{res.json().get("tx_hash", "")}')
+        logger.info(
+            f'interaction-res: {self.proxy}----{self.wallet_address}----report-res: tx_hash:{res.json().get("tx_hash", "")}')
         if 'Failed to create/verify wallet in NeoDB' in res.text:
             return 'retry'
         await asyncio.sleep(5)
         res = await self.interact_req.get_async(interaction_url)
-        logger.info(f'interaction-res: {self.proxy}----{self.wallet_address}----report-res: tx_hash:{res.json().get("tx_hash", "")}')
+        logger.info(
+            f'interaction-res: {self.proxy}----{self.wallet_address}----report-res: tx_hash:{res.json().get("tx_hash", "")}')
         stats_url = f'https://quests-usage-dev.prod.zettablock.com/api/user/{self.wallet_address}/stats'
         res = await self.interact_req.get_async(stats_url)
         logger.info(
             f'interaction-res: {self.proxy}----{self.wallet_address}----report-res: total_interact:{res.json()["total_interactions"]}')
-
 
     async def run_task(self):
         while True:
@@ -247,9 +277,7 @@ class KiteAIClient:
                 await asyncio.sleep(60 * 60 * 6)
 
 
-
-
-async def run(acc):
+async def run(acc, JS_SERVER):
     print(f'开始执行：{acc["proxy"]}')
     user_agent = UserAgent().chrome
     main_headers = {
@@ -280,20 +308,18 @@ async def run(acc):
         "referer": "https://agents.testnet.gokite.ai/",
         "user-agent": user_agent
     }
-    
-    kite = KiteAIClient(acc['mnemonic'], acc['proxy'], main_headers, event_stream_header, interact_header)
+
+    kite = KiteAIClient(acc['mnemonic'], acc['proxy'], main_headers, event_stream_header, interact_header, JS_SERVER)
     kite.ques_list = acc['ques']
     await kite.run_task()
 
 
-
-async def main():
+async def main(JS_SERVER: str):
     ques_list = []
     with open('./web3_questions.txt', 'r', encoding='utf-8') as file:
         for line in file.readlines():
             ques = line.strip()
             ques_list.append(ques)
-
 
     accs = []
     with open('./acc', 'r', encoding='utf-8') as file:
@@ -305,11 +331,14 @@ async def main():
                 'ques': ques_list
             })
 
-    tasks = [run(acc) for acc in accs]
+    tasks = [run(acc, JS_SERVER) for acc in accs]
     await asyncio.gather(*tasks)
+
+
 if __name__ == "__main__":
     logger.info('🚀 [ILSH] KITE v1.0 | Airdrop Campaign Live')
     logger.info('🌐 ILSH TG Community: t.me/ilsh_auto')
     logger.info('🐦 X(Twitter): https://x.com/hashlmBrian')
     logger.info('☕ Pay meCoffe：USDT（TRC20）: TAiGnbo2isJYvPmNuJ4t5kAyvZPvAmBLch')
-    asyncio.run(main())
+    JS_SERVER = '192.168.0.105'
+    asyncio.run(main(JS_SERVER))
