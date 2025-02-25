@@ -35,17 +35,7 @@ pip install -r requirements.txt
 4. 启动
  python kiteai.py
 ### js部分
-用于生成钱包签名，使用webstorm或者命令行启动
-复制js_server中的js文件
-1. 初始化
-    mkdir js_server && cd js_server
-    npm init -y
-2. 安装依赖
-   npm install express@4.18.2 body-parser@1.20.2 ethers@6.7.1 socks-proxy-agent@8.0.2 dotenv@16.3.1
-3. 启动服务
-   webstorm直接启动即可。
-   命令行：
-   npm run dev
+用于生成钱包签名，使用webstorm或者命令行启动: 请使用：https://github.com/ilshAuto/wallet_server
 
 # 出现问题请先使用deepseek\chatgpt询问
 
